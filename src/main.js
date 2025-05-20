@@ -6,14 +6,16 @@ const infoBox = document.getElementById('info-box')
 const demographicsText = document.getElementById('demographics')
 
 let locked = false
-let ctx = canvas.getContext('2d')
+let ctx
+let box = null
+let displaySize = { width: 0, height: 0 }
 
-const displaySize = {} 
-
+// ✅ Load models from public/models
+const modelPath = import.meta.env.BASE_URL + 'models'
 
 async function loadModels () {
-  await faceapi.nets.tinyFaceDetector.loadFromUri('/models')
-  await faceapi.nets.ageGenderNet.loadFromUri('/models')
+  await faceapi.nets.tinyFaceDetector.loadFromUri(modelPath)
+  await faceapi.nets.ageGenderNet.loadFromUri(modelPath)
 }
 
 async function startVideo () {
@@ -23,7 +25,7 @@ async function startVideo () {
 
 function getDemographicMessage (age, gender) {
   const ageRounded = Math.round(age)
-  const intro = `Detected: ${gender}, age ~${ageRounded}.`
+  const intro = `Detected ${gender}, age ~${ageRounded}.`
   let context = ''
 
   if (ageRounded < 18)
@@ -39,21 +41,25 @@ function getDemographicMessage (age, gender) {
   return `${intro} ${context}`
 }
 
-let box = null;
-
 async function onPlay () {
-  displaySize.width = video.videoWidth;
-  displaySize.height = video.videoHeight;
-  canvas.width = displaySize.width;
-  canvas.height = displaySize.height;
+  displaySize.width = video.videoWidth
+  displaySize.height = video.videoHeight
+  canvas.width = displaySize.width
+  canvas.height = displaySize.height
 
+  ctx = canvas.getContext('2d')
 
   setInterval(async () => {
     if (!video.paused && !video.ended) {
       const result = await faceapi
-        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+        .detectSingleFace(
+          video,
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 160 })
+        )
         .withAgeAndGender()
 
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height) // Draw base video
 
       if (result) {
         const { age, gender, detection } = result
@@ -65,50 +71,51 @@ async function onPlay () {
           infoBox.classList.remove('hidden')
         }
 
-    
-   
+        // ✅ Blur only the face region with circular mask
+        const faceCanvas = document.createElement('canvas')
+        faceCanvas.width = box.width
+        faceCanvas.height = box.height
+        const faceCtx = faceCanvas.getContext('2d')
+
+        // Draw the face region into the offscreen canvas
+        faceCtx.drawImage(
+          video,
+          box.x,
+          box.y,
+          box.width,
+          box.height,
+          0,
+          0,
+          box.width,
+          box.height
+        )
+
+        // Apply blur
+        faceCtx.filter = 'blur(20px)'
+        faceCtx.drawImage(faceCanvas, 0, 0)
+
+        // Clip circular mask and draw to main canvas
+        ctx.save()
+        ctx.beginPath()
+        ctx.arc(
+          box.x + box.width / 2, // centerX
+          box.y + box.height / 2, // centerY
+          Math.min(box.width, box.height) / 2, // radius
+          0,
+          Math.PI * 2
+        )
+        ctx.clip()
+
+        ctx.drawImage(faceCanvas, box.x, box.y)
+        ctx.restore()
       } else {
         locked = false
         infoBox.classList.add('hidden')
+        box = null
       }
     }
-  }, 100)
+  }, 300)
 }
-
-function animate () {
-  ctx.clearRect(0, 0, displaySize.width, displaySize.height)
-
-  if (box) {
-
-    console.log(box)
-
-
-    ctx.drawImage(video, 0, 0, displaySize.width, displaySize.height)
-    ctx.filter = 'blur(20px)'
-
-    ctx.drawImage(
-      video,
-      box.x,
-      box.y,
-      box.width,
-      box.height,
-      box.x,
-      box.y,
-      box.width,
-      box.height
-    )
-    ctx.filter = 'none'
-  
-  
-
-  }
-  
-  requestAnimationFrame(animate)
-
-
-}
-
-animate();
 
 async function init () {
   await loadModels()
